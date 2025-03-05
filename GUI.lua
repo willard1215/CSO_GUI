@@ -66,41 +66,61 @@ GUI = {
     textObjects = {},
     textBuffers = {},
     boxObjects = {},
-    boxBuffsers = {}
+    boxBuffers = {},
+
+    Element = {}
 }
 
 for i = 1, 1024 do
-    table.insert(GUI.boxBuffsers, UI.Box.Create())
+    table.insert(GUI.boxBuffers, UI.Box.Create())
     table.insert(GUI.textBuffers, UI.Text.Create())
 end
 
---ui객체 생성
-function GUI._CreateObject(self, args, uiType)
-    if not args or not uiType then return 0 end
-    
-    if type == GUI.TYPE.BOX then
-        local box = table.remove(GUI.boxBuffsers)
-        if not box then error('_CreateObject: Exceeded max box entity') end
-        local wrapper = {csObject = box}
-        setmetatable(wrapper, {__index = GUI})
-        box:Set(args)
-        wrapper.type = GUI.TYPE.BOX
-        table.insert(GUI.boxObjects,wrapper)
-        return wrapper
-    elseif type == GUI.TYPE.TEXT then
-        local text = table.remove(GUI.boxBuffsers)
-        if not text then error('_CreateObject: Exceeded max text entity') end
-        local wrapper = {csObject = box}
-        setmetatable(wrapper, {__index = GUI})
-        text:Set(args)
-        wrapper.type = GUI.TYPE.TEXT
-        table.insert(GUI.boxObjects,wrapper)
-        wrapper.csObject:Show()
-        return wrapper
-    else
-        error('_CreateObject: invalid uiType')
-    end
+function GUI.Element:new()
+    local obj = { children = {} }
+    setmetatable(obj, self)
+    self.__index = self
+    return obj
 end
+
+--ui객체 생성
+GUI.Box = GUI.Element:new()
+function GUI.Box:Create(args)
+    if not args then return 0 end
+
+    local box = table.remove(GUI.boxBuffers)
+    local obj = GUI.Element.New(self)
+
+    obj.type = GUI.TYPE.BOX
+    obj.csObject = box
+
+    if not box then error('_CreateObject: Exceeded max box entity') end
+    box:Set(args)
+    box:Show()
+    table.insert(GUI.boxObjects,obj)
+    return obj
+end
+
+GUI.Text = GUI.Element:new()
+function GUI.Text:Create(args)
+    if not args then return 0 end
+
+    local text = table.remove(GUI.textBuffers)
+    local obj = GUI.Element.New(self)
+
+    obj.type = GUI.TYPE.TEXT
+    obj.csObject = text
+
+    if not text then error('_CreateObject: Exceeded max text entity') end
+    text:Set(args)
+    text:Show()
+    table.insert(GUI.textObjects,obj)
+    return obj
+end
+
+function GUI.Box:Set()
+end
+function GUI.Text:Set()
 
 function GUI._RemoveObject(self)
     if not self.csObject then error('_RemoveObject: Not a GUI object') end
@@ -108,5 +128,16 @@ function GUI._RemoveObject(self)
     local obj = self.csObject
     setmetatable(obj,nil)
     table.remove(GUI.boxObjects, index)
-    table.insert(GUI.boxBuffsers, obj)
+    table.insert(GUI.boxBuffers, obj)
 end
+
+GUI.Container = GUI.Element:new()
+function GUI.Container:new()
+    local obj = GUI.Element.new(self)
+    return obj
+end
+
+function GUI.Container:AddChild(child)
+    table.insert(self.children, child)
+end
+
