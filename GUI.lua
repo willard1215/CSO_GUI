@@ -1,4 +1,15 @@
+local vector = {}
+vector.__index = vector
+function vector.Create(x,y)
+    local o = {}
+    if not x or not y then return end
+    o.x, o.y = x,y
+    return o
+end
+
 local table = table
+local screen = UI.ScreenSize()
+local center = {x=screen.width/2, y = screen.height/2}
 
 function table.dump(v, ores)
 	local res = ores or {}
@@ -58,15 +69,14 @@ function eventHandler:removeEvent(schedule)
 end
 
 GUI = {
-    DEBUGMODE = false,
     TYPE = {
         BOX = 0,
         TEXT = 1,
         CONTAINER = 2
     },
-    textObjects = {},
+    activeTexts = {},
     textBuffers = {},
-    boxObjects = {},
+    activeBoxes = {},
     boxBuffers = {},
 
     Element = {}
@@ -78,11 +88,17 @@ for i = 1, 1024 do
 end
 
 function GUI.CheckUsage()
-    return #GUI.boxBuffers, #GUI.textBuffers
+    local availableBox = #GUI.boxBuffers
+    local availableText = #GUI.textBuffers
+    local activeBox = 1024-availableBox
+    local activeText = 1024-availableText
+    print(string.format("box: %d / text: %d / Max: 1024", activeBox, activeText))
+
+    return activeBox, activeText
 end
 
 function GUI.Element:new()
-    local obj = { children = {} }
+    local obj = {}
     setmetatable(obj, self)
     self.__index = self
     return obj
@@ -94,15 +110,17 @@ function GUI.Box:Create(args)
     if not args then return 0 end
 
     local box = table.remove(GUI.boxBuffers)
-    local obj = GUI.Element.new(self)
+    if not box then error('_CreateObject: Exceeded max box entity') end
 
+    local obj = GUI.Element.new(self)
     obj.type = GUI.TYPE.BOX
     obj.csObject = box
 	setmetatable(obj, { __index = GUI})
-    if not box then error('_CreateObject: Exceeded max box entity') end
+
     box:Set(args)
     box:Show()
-    table.insert(GUI.boxObjects,obj)
+
+    GUI.activeBoxes[obj] = true
     return obj
 end
 
@@ -111,16 +129,18 @@ function GUI.Text:Create(args)
     if not args then return 0 end
 
     local text = table.remove(GUI.textBuffers)
+    if not text then error('_CreateObject: Exceeded max text entity') end
+
     local obj = GUI.Element.New(self)
 
     obj.type = GUI.TYPE.TEXT
     obj.csObject = text
 	setmetatable(obj, { __index = GUI})
 
-    if not text then error('_CreateObject: Exceeded max text entity') end
     text:Set(args)
     text:Show()
-    table.insert(GUI.textObjects,obj)
+
+    GUI.activeTexts[obj] = true
     return obj
 end
 
@@ -176,263 +196,171 @@ end
 
 function GUI.Remove(self)
     if not self.csObject then error('Remove: Not a GUI object') end
-    local index = table.indexof(GUI.boxObjects, self)
-    local obj = self.csObject
-    obj:Hide()
-    setmetatable(self,nil)
-    table.remove(GUI.boxObjects, index)
-    table.insert(GUI.boxBuffers, obj)
+    
+    if self.type == GUI.TYPE.BOX then
+        if GUI.activeBoxes[self] then
+            GUI.activeBoxes[self] = nil
+            self.csObject:Hide()
+            table.insert(GUI.boxBuffers, self.csObject)
+            setmetatable(self, nil)
+        end
+    elseif self.type == GUI.TYPE.TEXT then
+        if GUI.activeTexts[self] then
+            GUI.activeTexts[self] = nil
+            self.csObject:Hide()
+            table.insert(GUI.textBuffers, self.csObject)
+            setmetatable(self, nil)
+        end
+    end
 end
 
 GUI.Container = GUI.Element:new()
-function GUI.Container:new()
-    local obj = GUI.Element.new(self)
-    obj.type = GUI.TYPE.CONTAINER
-    return obj
-end
 
-function GUI.Container:AddChild(child)
-    table.insert(self.children, child)
-end
-
---Container 객체의 child를 대상으로 최적화 진행.
-function GUI.Optimize(_args)
-    table.sort(_args, function(a, b)
-        if a.y == b.y then return a.x < b.x end
-        return a.y < b.y
-    end)
-    
-    local merged = {}
-    local function canMergeVertical(a,b)
-        return  a.x ==b.x and a.width == b.width and
-                a.y <= b.y and (a.y + a.height) >= b.y and
-                a.r == b.r and a.g == b.g and
-                a.b == b.b and a.a == b.addEvent
-    end
-    
-    local i = 1
-    while i<= #_args do
-        local box = _args[i]
-        local j = i + 1
-        while j <= #_args do
-            if canMergeVertical(box,_args[j]) then
-                local newY = math.max(box.y + box.height, _args[j].y + _args[j].height)
-                box.height = newY - box.y
-                table.remove(_args, j)
-            else
-            j = j+1
-            end
-        end
-        table.insert(merged,box)
-        i = i + 1
-    end
-
-    local _optimizedArgs = {}
-    local function canMergeHorizontal(a,b)
-        return  a.y == b.y and a.height == b.height and
-                a.x <= b.x and (a.x + a.width) >= b.x and
-                a.r == b.r and a.g == b.g and
-                a.b == b.b and a.a == b.a
-    end
-
-    i = 1
-    while i <= #merged do
-        local box = merged[i]
-        local j = i + 1
-        while j <= #merged do
-            if canMergeHorizontal(box, merged[j]) then
-                local newX = math.max(box.x + box.width, merged[j].x + merged[j].width)
-                box.width = newX - box.x
-                table.remove(merged, j)
-            else
-                j = j + 1
-            end
-        end
-        table.insert(_optimizedArgs, box)
-        i = i + 1
-    end
-    return _optimizedArgs
-end
-
-function GUI.Container:Rotate(amount, center)
-    -- 최초 호출 시 원본 children 데이터를 저장
-    if not self._originalChildren then
-        self._originalChildren = {}
-        for i, child in ipairs(self.children) do
-            if child.type == GUI.TYPE.BOX then
-                local data = child:Get()
-                self._originalChildren[i] = {
-                    x = data.x,
-                    y = data.y,
-                    width = data.width,
-                    height = data.height,
-                    r = data.r,
-                    g = data.g,
-                    b = data.b,
-                    a = data.a
-                }
-            end
-        end
-    end
-
-    -- 원본 데이터를 기반으로 외곽 바운딩 박스 계산
-    local union = {xmin = math.huge, ymin = math.huge, xmax = -math.huge, ymax = -math.huge}
-    local firstBoxData = nil
-    for _, data in ipairs(self._originalChildren) do
-        if not firstBoxData then firstBoxData = data end
-        union.xmin = math.min(union.xmin, data.x)
-        union.ymin = math.min(union.ymin, data.y)
-        union.xmax = math.max(union.xmax, data.x + data.width)
-        union.ymax = math.max(union.ymax, data.y + data.height)
-    end
-    if union.xmin == math.huge then return end  -- 처리할 BOX가 없으면 종료
-
-    -- 회전 중심 결정 (center가 주어지면 offset 적용, 없으면 좌측 상단 사용)
-    if not center then
-        center = {x = union.xmin, y = union.ymin}
+function GUI.Container:Create(args)
+    local container = GUI.Element.new(self)
+    container.type = GUI.TYPE.CONTAINER
+    container.children = {}
+    if args then
+        container.x = args.x or 0
+        container.y = args.y or 0
+        container.width = args.width or 0
+        container.height = args.height or 0
+        container.rotation = args.rotation or 0
+        container.alpha = args.alpha or 255
+        container.zIndex = args.zIndex or 0
     else
-        center = {x = center.x + union.xmin, y = center.y + union.ymin}
+        container.x = 0
+        container.y = 0
+        container.width = 0
+        container.height = 0
+        container.rotation = 0
+        container.alpha = 255
+        container.zIndex = 0
     end
+    return container
+end
 
-    local rad = math.rad(amount)
-    local cosA = math.cos(rad)
-    local sinA = math.sin(rad)
-
-    -- 바운딩 박스의 네 모서리 좌표
-    local corners = {
-        {x = union.xmin, y = union.ymin},
-        {x = union.xmax, y = union.ymin},
-        {x = union.xmin, y = union.ymax},
-        {x = union.xmax, y = union.ymax}
-    }
-
-    -- 모서리들을 회전 (회전 후 다각형)
-    local rotatedCorners = {}
-    for _, corner in ipairs(corners) do
-        local dx = corner.x - center.x
-        local dy = corner.y - center.y
-        local rx = cosA * dx - sinA * dy + center.x
-        local ry = sinA * dx + cosA * dy + center.y
-        table.insert(rotatedCorners, {x = rx, y = ry})
+function GUI.Container:AddChild(child,zIndex)
+    if child then
+        child.zIndex = zIndex or child.zIndex or 0
+        table.insert(self.children, child)
+        child.parent = self
+        -- self:UpdateChildTransform(child)
+        self:Reorder()
     end
+end
 
-    -- 회전된 다각형의 올바른 순서 정렬 (중심 기준)
-    local polyCenter = {x = 0, y = 0}
-    for _, pt in ipairs(rotatedCorners) do
-        polyCenter.x = polyCenter.x + pt.x
-        polyCenter.y = polyCenter.y + pt.y
+function GUI.Container:RemoveChild(child)
+    for i, v in ipairs(self.children) do
+        if v == child then
+            table.remove(self.children, i)
+            child.parent = nil
+            break
+        end
     end
-    polyCenter.x = polyCenter.x / #rotatedCorners
-    polyCenter.y = polyCenter.y / #rotatedCorners
-    table.sort(rotatedCorners, function(a, b)
-        return math.atan(a.y - polyCenter.y, a.x - polyCenter.x) < math.atan(b.y - polyCenter.y, b.x - polyCenter.x)
+end
+
+function GUI.Container:Set(args)
+    if args.x then self.x = args.x end
+    if args.y then self.y = args.y end
+    if args.rotation then self.rotation = args.rotation end
+    if args.alpha then self.alpha = args.alpha end
+    if args.zIndex then self.zIndex = args.zIndex end
+
+    -- 자식 객체들의 위치와 효과 업데이트 (예: 회전, 레이어 정렬)
+    -- for _, child in ipairs(self.children) do
+    --     self:UpdateChildTransform(child)
+    -- end
+end
+
+function GUI.Container:UpdateChildTransform(child)
+    -- 예시: 컨테이너의 회전 적용
+    -- 자식은 컨테이너 내 상대 좌표(child.relativeX, child.relativeY)를 갖는다고 가정
+    if child.relativeX and child.relativeY then
+        local rad = math.rad(self.rotation)
+        local cosA = math.cos(rad)
+        local sinA = math.sin(rad)
+        local rotatedX = child.relativeX * cosA - child.relativeY * sinA
+        local rotatedY = child.relativeX * sinA + child.relativeY * cosA
+        -- 자식의 최종 좌표는 컨테이너의 좌표 + 회전 후 좌표
+        -- child:Set({ x = self.x + rotatedX, y = self.y + rotatedY, alpha = self.alpha })
+    else
+        -- 자식 객체가 절대 좌표를 사용한다면 별도 처리
+        -- child:Set({ x = self.x, y = self.y, alpha = self.alpha })
+    end
+end
+
+-- 컨테이너 내 자식 객체들의 레이어 재정렬 (zIndex 기반)
+function GUI.Container:Reorder()
+    table.sort(self.children, function(a, b)
+        return (a.zIndex or 0) < (b.zIndex or 0)
     end)
-    
-    -- 회전된 다각형의 bounding box 계산 (행 스캔 범위 결정)
-    local polyXmin, polyYmin = math.huge, math.huge
-    local polyXmax, polyYmax = -math.huge, -math.huge
-    for _, pt in ipairs(rotatedCorners) do
-        polyXmin = math.min(polyXmin, pt.x)
-        polyYmin = math.min(polyYmin, pt.y)
-        polyXmax = math.max(polyXmax, pt.x)
-        polyYmax = math.max(polyYmax, pt.y)
-    end
-
-    -- 다각형 내부를 채우기 위해, 각 정수 행에 대해 내부 x 구간 계산
-    local rows = {}
-    local yStart = math.floor(polyYmin)
-    local yEnd = math.ceil(polyYmax)
-    
-    local function edgeIntersection(p1, p2, y)
-        if (p1.y - y) * (p2.y - y) > 0 then return nil end
-        if p1.y == p2.y then return nil end
-        local t = (y - p1.y) / (p2.y - p1.y)
-        return p1.x + t * (p2.x - p1.x)
-    end
-
-    for y = yStart, yEnd - 1 do
-        local scanY = y + 0.5
-        local intersections = {}
-        for i = 1, #rotatedCorners do
-            local p1 = rotatedCorners[i]
-            local p2 = rotatedCorners[(i % #rotatedCorners) + 1]
-            local ix = edgeIntersection(p1, p2, scanY)
-            if ix then table.insert(intersections, ix) end
-        end
-        if #intersections >= 2 then
-            table.sort(intersections)
-            local x_left = intersections[1]
-            local x_right = intersections[#intersections]
-            local colStart = math.ceil(x_left)
-            local colEnd = math.floor(x_right)
-            if colStart <= colEnd then
-                rows[y] = {x_start = colStart, x_end = colEnd}
-            end
-        end
-    end
-
-    -- 연속된 행들 중 x 구간이 동일한 행들을 하나의 박스로 병합
-    local boxes = {}
-    local current_box = nil
-    for y = yStart, yEnd - 1 do
-        local seg = rows[y]
-        if seg then
-            local seg_width = seg.x_end - seg.x_start + 1
-            if current_box and current_box.x == seg.x_start and current_box.width == seg_width then
-                current_box.height = current_box.height + 1
-            else
-                if current_box then table.insert(boxes, current_box) end
-                current_box = {x = seg.x_start, y = y, width = seg_width, height = 1}
-            end
-        else
-            if current_box then
-                table.insert(boxes, current_box)
-                current_box = nil
-            end
-        end
-    end
-    if current_box then table.insert(boxes, current_box) end
-
-    -- 각 박스에 색상 정보 추가 (첫번째 BOX의 색상을 사용)
-    for _, box in ipairs(boxes) do
-        if firstBoxData then
-            box.r = firstBoxData.r
-            box.g = firstBoxData.g
-            box.b = firstBoxData.b
-            box.a = firstBoxData.a
-        else
-            box.r, box.g, box.b, box.a = 255, 255, 255, 255
-        end
-    end
-
-    -- 기존 children을 제거 (직접 self.children에서 삭제)
-    for i = #self.children, 1, -1 do
-        local child = self.children[i]
-        child:Remove()
-        table.remove(self.children, i)
-    end
-
-    -- 최적화된 박스들을 새로 추가
-    for _, box in ipairs(boxes) do
-        self:AddChild(GUI.Box:Create(box))
+    for _, child in ipairs(self.children) do
+        child:Refresh()  -- 각 자식 객체에 새 순서를 적용 (기본 UI 모듈의 특성에 맞게)
     end
 end
 
-screen = UI.ScreenSize()
-center = {x=screen.width/2, y = screen.height/2}
-
-
-
-child_a = GUI.Box:Create({x=center.x,y=center.y,width=200,height=100,r=255,g=255,b=255,a=255})
-child_b = GUI.Box:Create({x=center.x,y=center.y,width=10,height=10,r=255,g=255,b=255,a=255})
-container_a = GUI.Container:new()
-print(GUI.CheckUsage())
-container_a:AddChild(child_a)
-container_a:AddChild(child_b)
-print(GUI.CheckUsage())
-container_a:Rotate(50,{x=0,y=0})
-i=1
-function UI.Event:OnUpdate(time)
-    container_a:Rotate(i,{x=0,y=0})
-    i = i+1
+-- 애니메이션 (범용 함수)
+function GUI.Container:Animate(property, targetValue, duration, easingFunction)
+    -- 애니메이션 로직: 예를 들어, Tweening 엔진과 연동하여 속성을 일정 시간 동안 변화
+    -- 이 부분은 프레임 업데이트 루프나 타이머와 연계해서 구현해야 합니다.
 end
+
+-- 페이드아웃 효과 구현
+function GUI.Container:FadeOut(duration)
+    self:Animate("alpha", 0, duration, function(t) return t end)  -- 간단한 선형 이징 예제
+end
+
+-- 회전 애니메이션 구현
+function GUI.Container:AnimateRotation(targetAngle, duration, easingFunction)
+    self:Animate("rotation", targetAngle, duration, easingFunction)
+end
+
+-- 컨테이너의 표시/숨김 처리 (자식 모두에 적용)
+function GUI.Container:Show()
+    for _, child in ipairs(self.children) do
+        child:Show()
+    end
+end
+
+function GUI.Container:Hide()
+    for _, child in ipairs(self.children) do
+        child:Hide()
+    end
+end
+
+-- 전체 갱신: 컨테이너 및 자식들의 최신 상태 반영
+function GUI.Container:Refresh()
+    self:Reorder()
+    for _, child in ipairs(self.children) do
+        child:Refresh()
+    end
+end
+
+function GUI.Container:Rotate(angle, pivot)
+    local vertex = {}
+    local allArguments = {}
+
+    local afterArgs = {}
+    for k,v in ipairs(self.children) do
+        local args = v:Get()
+        local vertexes = {}
+        table.insert(vertexes, vector.Create(args.x,args.y))
+        table.insert(vertexes, vector.Create(args.x+args.width,args.y))
+        table.insert(vertexes, vector.Create(args.x+args.width,args.y+args.height))
+        table.insert(vertexes, vector.Create(args.x,args.y+args.height))
+    end
+end
+
+function GUI.Container:Collision(obj1,obj2)
+    
+end
+
+
+myContainer = GUI.Container:Create()
+box1 = GUI.Box:Create({x=center.x+1,y=center.y,width= 39,height=50,r=255,g=255,b=0,a=255})
+box2 = GUI.Box:Create({x=center.x+10,y=center.y,width= 30,height=60,r=255,g=255,b=0,a=255})
+myContainer:AddChild(box1)
+myContainer:AddChild(box2)
+-- myContainer:Rotate(30,{x=center.x,y=center.y})
+GUI:CheckUsage()
