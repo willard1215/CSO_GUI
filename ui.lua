@@ -1,20 +1,50 @@
+-- UI = {}
 local table = table
 local screen = UI.ScreenSize()
 local center = {x=screen.width/2, y = screen.height/2}
 
+---핸를러 등록 클래스
+---@class frameEvent
+local frameEvent = {}
+frameEvent.__index = frameEvent
 
-local table = table
-local eventHandler = {}
-eventHandler.events = {}
+---@param logic function
+---@param duration number 
+function frameEvent:new(logic, duration, differ, initPos)
+    local o = setmetatable({}, self)
+    o.logic = logic
+    o.duration = duration
+    o.differ = differ
+	o.initPosition = {x=initPos.x,y=initPos.y}
 
-function eventHandler:addEvent(handler)
-	if type(handler) ~= 'function' then error('Not a function!') end
-	table.insert(eventHandler.events,handler)
+    
+
+    return o
 end
 
-function eventHandler:removeEvent(handler)
-	if type(handler) ~= 'function' then error('Not a function!') end
-	table.remove(eventHandler.events,table.indexof(eventHandler.events,handler))
+function frameEvent:run()
+	if self.duration == 0 then 
+		return -1
+	end
+	self.duration = self.duration - 1
+	self.logic(self)
+	return 1
+end
+
+local eventHandler = {
+	events = {}
+}
+
+
+---@param frameEvent frameEvent
+function eventHandler:addEvent(frameEvent)
+	if frameEvent == nil then error("No frameEvent format") end
+	eventHandler.events[frameEvent] = frameEvent
+end
+
+---@param frameEvent frameEvent 
+function eventHandler:removeEvent(frameEvent)
+	eventHandler.events[frameEvent] = nil
 end
 
 
@@ -27,39 +57,109 @@ local ObjectPool = {}
 ObjectPool.__index = ObjectPool
 
 --- 객체 매니저 생성
----@param objectFactory function
-function ObjectPool:new(objectFactory)
-	local pool = {
-		pool = {},
-		used = {},
-		objectFactory = objectFactory
-	}
+---@param factory function
+function ObjectPool:new(factory)
+    local o = {
+        pool = {},
+        used = {},
+        factory = factory
+    }
 
-	for i = 1, MAX_OBJECT do
-		pool.pool[i] = objectFactory()
-	end
+    for i = 1, MAX_OBJECT do
+        local obj = factory()
+        o.pool[i] = obj
+        o.used[obj] = false
+    end
 
-	setmetatable(pool,self)
-	return pool
+    setmetatable(o, self)
+    return o
 end
 
 function ObjectPool:acquire()
-	for i, obj in ipairs(self.pool) do
-		if not self.used[i] then
-			self.used[i] = true
-			return obj, i
-		end
+    for _, obj in ipairs(self.pool) do
+        if not self.used[obj] then
+            self.used[obj] = true
+            return obj
+        end
+    end
+    return nil
+end
+
+function ObjectPool:release(obj)
+    if obj and self.used[obj] then
+        self.used[obj] = false
+    end
+end
+
+------------------------
+
+Container = {}
+Container.__index = Container
+
+function Container:new()
+	local c = {
+		children = {},
+		x = 0, y = 0,
+		scale = 1,
+		rotation = 0,
+	}
+	setmetatable(c,self)
+	return c
+end
+
+function Container:addChild(child)
+	table.insert(self.children, child)
+end
+
+function Container:setPosition(x,y)
+	local differ = {x = x-self.x, y = y-self.y}
+	self.x = x
+	self.y = y
+
+	for _,child in ipairs(self.children) do
+		local args = child:Get()
+		local newX = args.x + differ.x
+		local newY = args.y + differ.y
+		child:Set({x = newX, y = newY})
 	end
+end
+
+---@param to table 
+---@param duration number
+---@param animation function
+function Container:Move(to, duration, animation)
+	---Move 메서드 발생 시 [목적지 - 현위치]
+    local differ = {x = to.x - self.x, y = to.y - self.y}
+	print(self.x..", "..self.y)
+
+	---반복진행될 함수
+    --- @param instance frameEvent
+    local function moveLogic(instance)
+		local initialized = false
+		
+        local originalDuration = duration
+        local currentContainer = self
+		-- Move 메서드 발생 시 [목적지 - 현위치]
+        local differ = instance.differ
+        local progress = (originalDuration - instance.duration) / originalDuration
+
+        -- 애니메이션 적용
+        local easingValue = progress
+        if animation then
+            easingValue = animation(progress)
+        end
+		-- delta값. 절대좌표가 아님.
+        local step = {
+            x = math.floor(differ.x * easingValue),
+            y = math.floor(differ.y * easingValue)
+        }
 	
-	return nil
-end
+        currentContainer:setPosition(instance.initPosition.x + step.x, instance.initPosition.y +step.y)
+    end
 
-function ObjectPool:release(index)
-	if self.used[index] then
-		self.used[index] = false
-	end
+    local o = frameEvent:new(moveLogic, duration, differ, {x=self.x, y=self.y})
+    eventHandler:addEvent(o)
 end
-
 
 
 
@@ -79,28 +179,6 @@ end
 
 --플레이어가 키를 누르고 있으면 지속적으로 호출되는 이벤트 콜백입니다.
 function UI.Event:OnInput(inputs)
-end
-
-test = {}
---프레임마다 호출되는 이벤트 콜백입니다
-function UI.Event:OnUpdate(time)
-	--이벤트 핸들러.
-	for _, handler in ipairs(eventHandler.events) do
-		if type(handler) == 'function'then
-			local res = handler()
-			--핸들러 함수의 반환값이 0이되면 자동 종료
-			if res == 0 then
-				eventHandler:removeEvent(handler)
-			end
-			xpcall(function ()
-			end,function ()
-				print('error on eHandler')
-			end)
-		end
-	end
-	-- print(string.format('%d개의 객체 사용중',GUI.CheckUsage()))
-	-- print(collectgarbage("count")..'kb Used')
-	collectgarbage('collect')
 end
 
 --플레이어가 채팅을 입력하면 호출되는 이벤트 콜백입니다.
@@ -123,6 +201,25 @@ function UI.Event:OnKeyUp(inputs)
 	end
 end
 
+--프레임마다 호출되는 이벤트 콜백입니다
+function UI.Event:OnUpdate(time)
+	--이벤트 핸들러.
+	for _, frameEvent in pairs(eventHandler.events) do
+		if type(frameEvent.run) == 'function'then
+			local res = frameEvent:run()
+			--핸들러 함수의 반환값이 0이되면 자동 종료
+			if res == -1 then
+				eventHandler:removeEvent(frameEvent)
+			end
+			xpcall(function ()
+			end,function ()
+				print('error on eHandler')
+			end)
+		end
+	end
+	-- print(collectgarbage("count")..'kb Used')
+	-- collectgarbage('collect')
+end
 ---------------
 ---런타임---
 
@@ -130,9 +227,21 @@ local function createBox()
 	return UI.Box.Create()
 end
 
-local BOX = ObjectPool:new(createBox)
-
-obj, index = BOX:acquire()
-if obj then
-	obj:Set({x=0,y=0,width = 100,height= 100, r= 255,g=255,b=255,a=255})
+local function createText()
+	return UI.Text.Create()
 end
+
+local BOX = ObjectPool:new(createBox)
+local TEXT = ObjectPool:new(createText)
+
+Obj, Index = BOX:acquire()
+if Obj then
+	Obj:Set({x=0,y=0,width = 100,height= 100, r= 255,g=255,b=255,a=255})
+end
+
+MyContainer = Container:new()
+MyContainer:addChild(Obj)
+MyContainer:setPosition(center.x*0.25,center.y)
+
+print("-----------")
+MyContainer:Move({x=center.x,y=center.y},50)

@@ -221,14 +221,42 @@ function Bounce(t)
 		return 7.5625 * t * t + 0.984375;
 end
 
-function EaseElasticIn(t, period)
-    if t == 0 or t == 1 then return t end
+function BounceIn(t)
+    return 1.0 - Bounce(1.0 - t)
+end
 
+function BounceOut(t)
+    return Bounce(t)
+end
+
+function BounceInOut(t)
+    if t < 0.5 then
+        return (1.0 - Bounce(1.0 - t * 2.0)) * 0.5
+    else
+        return Bounce(t * 2.0 - 1.0) * 0.5 + 0.5
+    end
+end
+
+function ElasticIn(t, period)
     period = period or 0.4
     local s = period / 4.0
+    t = t - 1.0
+    return -(2.0)^(10.0 * t) * math.sin((t - s) * (math.pi * 2.0) / period)
+end
 
-    for i = 1, 10 do
-        t = t - 1.0
-        return -(2.0 ^ (10.0 * t)) * math.sin((t - s) * (math.pi * 2.0) / period)
+function ElasticOut(t, period)
+    period = period or 0.4
+    local s = period / 4.0
+    return (2.0)^(-10.0 * t) * math.sin((t - s) * (math.pi * 2.0) / period) + 1.0
+end
+
+function ElasticInOut(t, period)
+    period = period or 0.4
+    local s = period / 4.0
+    t = 2.0 * t - 1.0
+    if t < 0.0 then
+        return -0.5 * (2.0)^(10.0 * t) * math.sin((t - s) * (math.pi * 2.0) / period)
+    else
+        return (2.0)^(-10.0 * t) * math.sin((t - s) * (math.pi * 2.0) / period) * 0.5 + 1.0
     end
 end
