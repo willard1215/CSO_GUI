@@ -1,4 +1,4 @@
 {
-    "game": ["common.lua","game.lua"], 
-    "ui": ["utils.lua","common.lua","ui.lua"]
+    "game": ["Game/game.lua"], 
+    "ui": ["COMMON/utils.lua","UI/gui.lua"]
 }

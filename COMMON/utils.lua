@@ -207,6 +207,7 @@ function table.compact(t)
     return newTable
 end
 
+---------------애니메이션---------------------
 function Bounce(t)
 		if (t < 1.0 / 2.75) then
 			return 7.5625 * t * t;

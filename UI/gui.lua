@@ -8,16 +8,22 @@ local center = {x=screen.width/2, y = screen.height/2}
 local frameEvent = {}
 frameEvent.__index = frameEvent
 
+frameEvent.callType = {
+	MOVE = 1,
+	FADEOUT = 2,
+}
+
 ---@param logic function
 ---@param duration number 
-function frameEvent:new(logic, duration, differ, initPos)
+function frameEvent:new(logic, duration, caller, ...)
+	---@class frameEvent
     local o = setmetatable({}, self)
     o.logic = logic
     o.duration = duration
-    o.differ = differ
-	o.initPosition = {x=initPos.x,y=initPos.y}
-
-    
+	o.args = {...}
+	if caller == self.callType.MOVE then
+		o.initPosition = o.args[2]
+	end
 
     return o
 end
@@ -27,7 +33,7 @@ function frameEvent:run()
 		return -1
 	end
 	self.duration = self.duration - 1
-	self.logic(self)
+	self:logic()
 	return 1
 end
 
@@ -135,12 +141,10 @@ function Container:Move(to, duration, animation)
 	---반복진행될 함수
     --- @param instance frameEvent
     local function moveLogic(instance)
-		local initialized = false
-		
         local originalDuration = duration
-        local currentContainer = self
+        local Container = self
 		-- Move 메서드 발생 시 [목적지 - 현위치]
-        local differ = instance.differ
+        local differ = instance.args[1]
         local progress = (originalDuration - instance.duration) / originalDuration
 
         -- 애니메이션 적용
@@ -154,11 +158,35 @@ function Container:Move(to, duration, animation)
             y = math.floor(differ.y * easingValue)
         }
 	
-        currentContainer:setPosition(instance.initPosition.x + step.x, instance.initPosition.y +step.y)
+        Container:setPosition(instance.initPosition.x + step.x, instance.initPosition.y +step.y)
     end
 
-    local o = frameEvent:new(moveLogic, duration, differ, {x=self.x, y=self.y})
+    local o = frameEvent:new(
+		moveLogic, duration, frameEvent.callType.MOVE,
+		differ, {x=self.x, y=self.y}
+	)
     eventHandler:addEvent(o)
+end
+
+---페이드아웃 함수
+---@param duration number
+function Container:Fadeout(duration)
+	---인자 frameEvent
+	local function fadeOutLogic (instance)
+		---호출자
+		local Container = self
+		for _,child in ipairs(Container.children) do
+			local arg = child:Get().a
+			local a = arg - (arg / duration)
+			if a < 0 then
+				a = 0
+			end
+			print(a)
+			child:Set({a = arg - (arg / duration)})
+		end
+	end
+	local o = frameEvent:new(fadeOutLogic,100,frameEvent.callType.FADEOUT)
+	eventHandler:addEvent(o)
 end
 
 
@@ -244,4 +272,5 @@ MyContainer:addChild(Obj)
 MyContainer:setPosition(center.x*0.25,center.y)
 
 print("-----------")
+MyContainer:Fadeout(200)
 MyContainer:Move({x=center.x,y=center.y},50)
